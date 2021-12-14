@@ -395,6 +395,16 @@ func (p *Package) BuildYpkg(notif PidNotifier, usr *UserInfo, pman *EopkgManager
 		}).Error("Failed to build package")
 		return err
 	}
+
+	// Generate ABI Report
+	log.Debug("Attempting to generate ABI report")
+	if err := p.GenerateABIReport(notif, overlay); err != nil {
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Error("Failed to generate ABI report within solbuild")
+		return err
+	}
+
 	notif.SetActivePID(0)
 	return nil
 }
@@ -450,6 +460,28 @@ func (p *Package) BuildXML(notif PidNotifier, pman *EopkgManager, overlay *Overl
 	return nil
 }
 
+// GenerateABIReport will take care of generating the abireport using the yabi binary
+// It will only be called by CollectAssets.
+func (p *Package) GenerateABIReport(notif PidNotifier, overlay *Overlay) error {
+	// Generate abireports within chroot using yabi
+	// FIXME: do something about the pushd hack
+	// FIXME: more error checking, os.stat inside of chroot?
+	// FIXME: Debug messages
+	// FIXME: Allow toggle to disable incase of extremely large eopkgs (texlive)
+	// FIXME: Ignore eopkgs over a certain size and prompt user to run abireport manually (again texlive)
+
+	log.Printf("Running yabi from solbuild!")
+	cmd := fmt.Sprintf("pushd /home/build/work/; /usr/bin/yabi *.eopkg; popd")
+	if err := ChrootExec(notif, overlay.MountPoint, cmd); err != nil {
+		log.WithFields(log.Fields{
+			"error": err,
+		}).Error("Failed to generate abireport with yabi")
+		return err
+	}
+	notif.SetActivePID(0)
+	return nil
+}
+
 // CollectAssets will search for the build files and copy them back to the
 // users current directory. If solbuild was invoked via sudo, solbuild will
 // then attempt to set the owner as the original user.
@@ -487,6 +519,10 @@ func (p *Package) CollectAssets(overlay *Overlay, usr *UserInfo, manifestTarget 
 		// Worked, great. Now ensure our next cycle collects, chowns, etc.
 		collections = append(collections, tramPath)
 	}
+
+	// FIXME: need errs here?
+	abireportfiles, _ := filepath.Glob(filepath.Join(collectionDir, "abi_*"))
+	collections = append(collections, abireportfiles...)
 
 	if p.Type == PackageTypeYpkg {
 		pspecs, _ := filepath.Glob(filepath.Join(collectionDir, "pspec_*.xml"))
